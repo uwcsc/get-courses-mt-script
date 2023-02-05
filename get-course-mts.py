@@ -4,6 +4,7 @@ import re
 import requests
 import json
 from datetime import datetime
+import csv
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -16,9 +17,23 @@ BCS_CALENDAR_LINK = "http://ugradcalendar.uwaterloo.ca/page/MATH-Bachelor-of-Com
 COURSES_LINK = "courses/"
 TIMEOUT = 10
 UWFLOW_API_LINK = "https://uwflow.com/graphql"
+RESULT_CSV_FILENAME = "result.csv"
 
 # Variables
 driver: webdriver.Chrome
+
+# Get current termcode given date (which is a datetime object)
+def getTermcode(date):
+    # return the 'year' part of the termcode
+    year_termcode = int(date.year) - 1900
+    # return the 'month' part of the termcode
+    # 1 = Winter; 5 = Spring; 9 = Fall
+    month_termcode = 1 if date.month < 5 else 5 if date.month < 9 else 9
+    return f"{year_termcode}{month_termcode}"
+
+# Get current termcode
+def getCurrentTerm():
+    return getTermcode(datetime.now())
 
 # Get course data from UWFlow - returns a list of course sections for that course
 def getCourseSectionsFromUwFlow(subjectCode: str, catalogNumber: str):
@@ -52,10 +67,20 @@ def getCourseCodesForDegree() -> List[Tuple[str, str]]:
   courseCodes = list(filter(lambda cc: len(cc.split(" ")) == 2, courseCodes))
   return courseCodes
 
-# Convert # of seconds to [hours, minutes]
+# Convert # of seconds to hours:minutes
 def convertTime(seconds):
-  return [seconds // 3600, (seconds % 3600) // 60]
+  return f"{str(seconds // 3600).zfill(2)}:{str((seconds % 3600) // 60).zfill(2)}"
 
+# Write data to a csv with specified file path
+def writeDataToCsv(data, filename):
+  with open(filename, 'w', newline='') as csvfile:
+    field_names = ["course_code", "date", "start_time", "end_time"]
+    writer = csv.DictWriter(csvfile, delimiter=',', fieldnames=field_names)
+    writer.writeheader()
+    for e in data:
+      writer.writerow(e)
+
+# Main function
 def getCoursesMts():
   courseCodes = getCourseCodesForDegree()
   result = []
@@ -65,18 +90,23 @@ def getCoursesMts():
     if len(courseSections) == 0: continue
 
     # Filter to just get tests
-    courseSections = filter(lambda cc: len(re.findall("TST", cc["section_name"])) > 0, courseSections)
-
+    courseSections = filter(lambda cs: cs["term_id"] == int(getCurrentTerm()) and len(re.findall("TST", cs["section_name"])) > 0, courseSections)
+    
     for cs in courseSections:
       meetings = cs["meetings"][0]
       # Get date and time of the exam
-      date = datetime.fromisoformat(meetings["start_date"])
+      date = datetime.fromisoformat(meetings["start_date"]).date()
       start_time = convertTime(meetings["start_seconds"])
       end_time = convertTime(meetings["end_seconds"])
-      print('hellpo')
+      
+      result += [{
+        "course_code": cc, 
+        "date": date, 
+        "start_time": start_time, 
+        "end_time": end_time
+      }]
 
-    
-
+  writeDataToCsv(result, RESULT_CSV_FILENAME)
 
 if __name__ == '__main__':
   chrome_options = Options()
